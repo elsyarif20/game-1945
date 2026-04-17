@@ -1,0 +1,904 @@
+```html
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Dirgantara 1945: Langit Kemerdekaan</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; overflow: hidden; background-color: #87CEEB; touch-action: none; font-family: 'Courier New', Courier, monospace; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; pointer-events: none; }
+        
+        /* Kekeran / Crosshair */
+        .crosshair {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 40px; height: 40px; opacity: 0.7; pointer-events: none;
+        }
+        .crosshair::before, .crosshair::after {
+            content: ''; position: absolute; background: rgba(255, 255, 255, 0.8);
+        }
+        .crosshair::before { top: 19px; left: 0; width: 40px; height: 2px; }
+        .crosshair::after { top: 0; left: 19px; width: 2px; height: 40px; }
+        .crosshair-center {
+            position: absolute; top: 18px; left: 18px; width: 4px; height: 4px;
+            background: red; border-radius: 50%;
+        }
+
+        /* Kontrol Mobile */
+        #mobile-controls { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 5; display: none; }
+        .joystick-zone { position: absolute; bottom: 20px; left: 20px; width: 150px; height: 150px; background: rgba(255,255,255,0.1); border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); touch-action: none;}
+        .joystick-knob { position: absolute; top: 50px; left: 50px; width: 50px; height: 50px; background: rgba(255,255,255,0.5); border-radius: 50%; pointer-events: none; transform: translate(0,0); }
+        
+        .action-zone { position: absolute; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 15px; }
+        .btn-action { width: 70px; height: 70px; border-radius: 50%; background: rgba(200, 0, 0, 0.5); border: 2px solid rgba(255,255,255,0.4); color: white; font-weight: bold; font-size: 14px; display: flex; justify-content: center; align-items: center; user-select: none; touch-action: none;}
+        .btn-throttle { background: rgba(0, 100, 200, 0.5); }
+
+        /* Elemen HUD */
+        .hud-text { text-shadow: 1px 1px 2px black; }
+        .bar-container { width: 200px; height: 15px; background: rgba(0,0,0,0.5); border: 1px solid white; margin-bottom: 5px; }
+        .health-bar { height: 100%; background: #ef4444; width: 100%; transition: width 0.2s; }
+        .throttle-bar { height: 100%; background: #3b82f6; width: 50%; transition: width 0.1s; }
+
+        @media (max-width: 768px) {
+            #mobile-controls { display: block; }
+            .desktop-hint { display: none; }
+        }
+
+        /* Layar Mulai */
+        #start-screen {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(10, 20, 10, 0.9); z-index: 50; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; color: white; text-align: center;
+        }
+        #mission-briefing {
+            position: absolute; top: 20%; left: 50%; transform: translateX(-50%);
+            width: 80%; max-width: 600px; background: rgba(0,0,0,0.7); border: 2px solid #8b0000;
+            padding: 20px; color: #fff; z-index: 40; display: none; text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Kanvas Game -->
+    <div id="canvas-container"></div>
+
+    <!-- Lapisan Antarmuka (UI) -->
+    <div id="ui-layer" class="p-4 flex flex-col justify-between">
+        <div class="flex justify-between items-start">
+            <div class="hud-text text-white">
+                <h1 class="text-xl font-bold text-red-500 mb-2">AURI / TKR</h1>
+                <div>KONDISI</div>
+                <div class="bar-container"><div id="hud-health" class="health-bar"></div></div>
+                <div>DAYA MESIN <span id="speed-text" class="text-xs">250 km/h</span></div>
+                <div class="bar-container"><div id="hud-throttle" class="throttle-bar"></div></div>
+            </div>
+            <div class="hud-text text-white text-right">
+                <div class="text-lg font-bold text-yellow-400" id="mission-title">GELOMBANG 1</div>
+                <div id="enemy-count">Musuh: 0</div>
+                <div id="score-display">Skor: 0</div>
+            </div>
+        </div>
+        
+        <div class="crosshair">
+            <div class="crosshair-center"></div>
+        </div>
+
+        <div class="hud-text text-white text-center desktop-hint mb-4">
+            [W/S] Naik/Turun | [A/D] Miring | [Q/E] Belok | [Shift/Ctrl] Gas/Rem | [Spasi] Tembak
+        </div>
+    </div>
+
+    <!-- Kontrol Layar Sentuh -->
+    <div id="mobile-controls">
+        <div class="joystick-zone" id="joystick">
+            <div class="joystick-knob" id="joystick-knob"></div>
+        </div>
+        <div class="action-zone">
+            <div class="btn-action btn-throttle" id="btn-accel">GAS</div>
+            <div class="btn-action btn-throttle" id="btn-decel">REM</div>
+            <div class="btn-action" id="btn-fire">TEMBAK</div>
+        </div>
+    </div>
+
+    <!-- Layar Mulai / Penjelasan Misi -->
+    <div id="start-screen">
+        <h1 class="text-5xl font-bold text-red-600 mb-2 font-serif tracking-widest">DIRGANTARA 1945</h1>
+        <h2 class="text-xl mb-6 text-gray-300">LANGIT KEMERDEKAAN</h2>
+        <div class="max-w-2xl text-left text-gray-400 mb-8 p-4 bg-black/50 rounded border border-gray-700">
+            <p class="mb-2"><strong>Agustus 1945.</strong> Kemerdekaan telah diproklamasikan, namun langit kita belum sepenuhnya bebas. Sebagai pilot dari Tentara Keamanan Rakyat (TKR) Udara, Anda harus mempertahankan republik menggunakan pesawat rampasan.</p>
+            <p>Hadapi pasukan musuh yang mencoba merebut kembali nusantara. Merdeka atau Mati!</p>
+        </div>
+        <button id="btn-start" class="px-8 py-4 bg-red-700 hover:bg-red-600 text-white font-bold rounded text-xl uppercase tracking-wider border-2 border-red-900 transition-colors">Nyalakan Mesin</button>
+    </div>
+
+    <div id="mission-briefing">
+        <h3 id="briefing-title" class="text-2xl text-red-500 font-bold mb-2"></h3>
+        <p id="briefing-text" class="text-lg"></p>
+    </div>
+
+<script>
+/**
+ * DIRGANTARA 1945: LANGIT KEMERDEKAAN
+ * Mesin Game Utama menggunakan Three.js dan Web Audio API
+ */
+
+// --- 1. STATUS GAME & KONSTANTA ---
+const GAME_STATE = { MENU: 0, BRIEFING: 1, PLAYING: 2, GAMEOVER: 3 };
+let currentState = GAME_STATE.MENU;
+
+const MAP_SIZE = 12000;
+const BOUNDARY = 5000;
+let score = 0;
+let currentWave = 1;
+let enemiesRemaining = 0;
+
+// Input
+const keys = { w:false, a:false, s:false, d:false, q:false, e:false, space:false, shift:false, ctrl:false };
+const touchInput = { pitch: 0, roll: 0, fire: false, throttle: 0 }; // Throttle: 1 (gas), -1 (rem)
+
+// --- 2. SINTESIS AUDIO ---
+// Menghasilkan suara prosedural tanpa aset eksternal
+class AudioEngine {
+    constructor() {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = 0.4;
+        this.masterGain.connect(this.ctx.destination);
+        
+        // Looping suara mesin
+        this.engineOsc = this.ctx.createOscillator();
+        this.engineOsc.type = 'sawtooth';
+        this.engineFilter = this.ctx.createBiquadFilter();
+        this.engineFilter.type = 'lowpass';
+        this.engineGain = this.ctx.createGain();
+        
+        this.engineOsc.connect(this.engineFilter);
+        this.engineFilter.connect(this.engineGain);
+        this.engineGain.connect(this.masterGain);
+        
+        this.engineOsc.frequency.value = 50;
+        this.engineFilter.frequency.value = 200;
+        this.engineGain.gain.value = 0; 
+        
+        this.engineOsc.start();
+        this.initialized = false;
+    }
+
+    init() {
+        if(this.ctx.state === 'suspended') this.ctx.resume();
+        this.engineGain.gain.setTargetAtTime(0.3, this.ctx.currentTime, 1);
+        this.initialized = true;
+    }
+
+    updateEngine(throttleFactor) {
+        if(!this.initialized) return;
+        // Penyesuaian nada berdasarkan gas
+        const freq = 40 + (throttleFactor * 60); 
+        this.engineOsc.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.1);
+        this.engineFilter.frequency.setTargetAtTime(150 + throttleFactor*300, this.ctx.currentTime, 0.1);
+    }
+
+    playShoot() {
+        if(!this.initialized) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.1);
+        
+        gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.1);
+    }
+
+    playExplosion() {
+        if(!this.initialized) return;
+        // Suara ledakan (white noise)
+        const bufferSize = this.ctx.sampleRate * 2; // 2 detik
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1000, this.ctx.currentTime);
+        filter.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 1.5);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(1, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 1.5);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+        noise.start();
+    }
+}
+const audioFX = new AudioEngine();
+
+// --- 3. PENGATURAN THREE.JS ---
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x6ca6cd); // Biru langit
+scene.fog = new THREE.FogExp2(0x6ca6cd, 0.0003);
+
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 1, 10000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+// Pencahayaan
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xfffae6, 0.8);
+dirLight.position.set(1000, 2000, 1000);
+dirLight.castShadow = true;
+dirLight.shadow.camera.near = 500;
+dirLight.shadow.camera.far = 4000;
+dirLight.shadow.camera.left = -1000;
+dirLight.shadow.camera.right = 1000;
+dirLight.shadow.camera.top = 1000;
+dirLight.shadow.camera.bottom = -1000;
+scene.add(dirLight);
+
+// --- 4. ASET PROSEDURAL ---
+
+// Pembuatan Daratan (Terrain)
+function createTerrain() {
+    const geo = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 64, 64);
+    geo.rotateX(-Math.PI / 2);
+    
+    // Noise prosedural untuk perbukitan
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const z = pos.getZ(i);
+        // Menggabungkan gelombang sinus untuk bukit organik
+        const y = Math.sin(x * 0.001) * 150 + Math.cos(z * 0.0015) * 150 + 
+                  Math.sin(x * 0.005 + z * 0.003) * 50;
+        pos.setY(i, y - 200); // menurunkan daratan
+    }
+    geo.computeVertexNormals();
+    
+    const mat = new THREE.MeshLambertMaterial({ 
+        color: 0x2e5a27, // Hijau tua tropis
+        flatShading: true,
+        wireframe: false
+    });
+    
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+}
+createTerrain();
+
+// Pembuat Pesawat Prosedural
+function createPlaneMesh(type) {
+    const group = new THREE.Group();
+    
+    // Warna
+    let bodyColor, wingColor, detailColor;
+    if (type === 'player') {
+        bodyColor = 0x555555; wingColor = 0x445544; detailColor = 0xcc0000; // Motif Merah Putih
+    } else if (type === 'dutch') {
+        bodyColor = 0xaabbcc; wingColor = 0x8899aa; detailColor = 0xff8800; // Motif Oranye (Belanda)
+    } else {
+        bodyColor = 0xdddddd; wingColor = 0xcccccc; detailColor = 0xaa0000; // Motif Zero (Jepang)
+    }
+
+    const matBody = new THREE.MeshPhongMaterial({ color: bodyColor, flatShading: true });
+    const matWing = new THREE.MeshPhongMaterial({ color: wingColor, flatShading: true });
+    const matDetail = new THREE.MeshPhongMaterial({ color: detailColor, flatShading: true });
+
+    // Badan Pesawat (Fuselage)
+    const fuseGeo = new THREE.CylinderGeometry(0.8, 1.2, 10, 8);
+    fuseGeo.rotateX(Math.PI / 2);
+    const fuselage = new THREE.Mesh(fuseGeo, matBody);
+    fuselage.castShadow = true;
+    group.add(fuselage);
+
+    // Kokpit
+    const cockpitGeo = new THREE.BoxGeometry(1.5, 1.5, 3);
+    const cockpitMat = new THREE.MeshPhongMaterial({ color: 0x111122, transparent: true, opacity: 0.8 });
+    const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
+    cockpit.position.set(0, 1, 1);
+    group.add(cockpit);
+
+    // Sayap Utama
+    const wingGeo = new THREE.BoxGeometry(14, 0.4, 3);
+    const wings = new THREE.Mesh(wingGeo, matWing);
+    wings.position.set(0, 0, 1);
+    wings.castShadow = true;
+    group.add(wings);
+
+    // Detail bendera (Merah Putih di sayap untuk pemain)
+    if(type === 'player') {
+        const markGeo = new THREE.BoxGeometry(3, 0.5, 2.5);
+        const mark1 = new THREE.Mesh(markGeo, new THREE.MeshPhongMaterial({color: 0xffffff}));
+        const mark2 = new THREE.Mesh(markGeo, new THREE.MeshPhongMaterial({color: 0xdd0000}));
+        mark1.position.set(5, 0, 1); mark2.position.set(-5, 0, 1);
+        group.add(mark1); group.add(mark2);
+    }
+
+    // Ekor Horizontal
+    const tailHGeo = new THREE.BoxGeometry(5, 0.3, 1.5);
+    const tailH = new THREE.Mesh(tailHGeo, matWing);
+    tailH.position.set(0, 0.2, 4.5);
+    group.add(tailH);
+
+    // Ekor Vertikal
+    const tailVGeo = new THREE.BoxGeometry(0.3, 2.5, 2);
+    const tailV = new THREE.Mesh(tailVGeo, matDetail);
+    tailV.position.set(0, 1.5, 4.5);
+    group.add(tailV);
+
+    // Baling-baling
+    const propGeo = new THREE.BoxGeometry(5, 0.2, 0.2);
+    const prop = new THREE.Mesh(propGeo, new THREE.MeshPhongMaterial({color: 0x111111}));
+    prop.position.set(0, 0, -5.2);
+    group.add(prop);
+    group.userData.propeller = prop;
+
+    return group;
+}
+
+// Sistem Partikel (Ledakan & Asap)
+class ParticleManager {
+    constructor() {
+        this.particles = [];
+        const geo = new THREE.BoxGeometry(1, 1, 1);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+        this.mesh = new THREE.InstancedMesh(geo, mat, 1000);
+        this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        scene.add(this.mesh);
+        
+        this.dummy = new THREE.Object3D();
+        this.activeCount = 0;
+    }
+
+    spawnExplosion(pos) {
+        audioFX.playExplosion();
+        for(let i=0; i<30; i++) {
+            if(this.activeCount >= 1000) break;
+            
+            const p = {
+                index: this.activeCount,
+                pos: pos.clone(),
+                vel: new THREE.Vector3(
+                    (Math.random()-0.5)*100,
+                    (Math.random()-0.5)*100,
+                    (Math.random()-0.5)*100
+                ),
+                life: 1.0,
+                maxLife: 1.0 + Math.random()*0.5,
+                scale: Math.random() * 3 + 1
+            };
+            this.particles.push(p);
+            this.activeCount++;
+        }
+    }
+
+    update(dt) {
+        let i = this.particles.length;
+        while (i--) {
+            const p = this.particles[i];
+            p.life -= dt;
+            if (p.life <= 0) {
+                // Hapus partikel
+                this.particles[i] = this.particles[this.activeCount - 1];
+                this.particles.pop();
+                this.activeCount--;
+                this.dummy.scale.set(0,0,0);
+                this.dummy.updateMatrix();
+                this.mesh.setMatrixAt(this.activeCount, this.dummy.matrix);
+                continue;
+            }
+            
+            p.pos.addScaledVector(p.vel, dt);
+            p.vel.multiplyScalar(0.95); // Gaya gesek
+            
+            const scale = p.scale * (p.life / p.maxLife);
+            this.dummy.position.copy(p.pos);
+            this.dummy.scale.set(scale, scale, scale);
+            this.dummy.rotation.x += p.vel.x * 0.01;
+            this.dummy.rotation.y += p.vel.y * 0.01;
+            this.dummy.updateMatrix();
+            this.mesh.setMatrixAt(i, this.dummy.matrix);
+        }
+        this.mesh.instanceMatrix.needsUpdate = true;
+    }
+}
+const particles = new ParticleManager();
+
+// --- 5. OBJEK GAME ---
+
+class Projectile {
+    constructor(pos, rot, velocity, isPlayer) {
+        this.mesh = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.2, 0.2, 4, 4),
+            new THREE.MeshBasicMaterial({ color: isPlayer ? 0xffff00 : 0xff4400 })
+        );
+        this.mesh.rotation.copy(rot);
+        this.mesh.rotateX(Math.PI/2); // Sejajarkan silinder
+        
+        // Munculkan sedikit di depan agar tidak menabrak diri sendiri
+        const forward = new THREE.Vector3(0,0,-1).applyEuler(rot);
+        this.mesh.position.copy(pos).add(forward.multiplyScalar(8));
+        
+        this.velocity = forward.normalize().multiplyScalar(velocity);
+        this.life = 2.0;
+        this.isPlayer = isPlayer;
+        this.active = true;
+        scene.add(this.mesh);
+    }
+
+    update(dt) {
+        if(!this.active) return;
+        this.life -= dt;
+        if(this.life <= 0) {
+            this.destroy();
+            return;
+        }
+        this.mesh.position.addScaledVector(this.velocity, dt);
+    }
+
+    destroy() {
+        this.active = false;
+        scene.remove(this.mesh);
+    }
+}
+
+class Airplane {
+    constructor(type) {
+        this.mesh = createPlaneMesh(type);
+        scene.add(this.mesh);
+        
+        this.speed = 0;
+        this.maxSpeed = 300;
+        this.minSpeed = 50;
+        this.throttle = 0.5;
+        
+        this.pitch = 0;
+        this.roll = 0;
+        this.yaw = 0;
+        
+        this.health = 100;
+        this.maxHealth = 100;
+        this.active = true;
+        this.type = type;
+        
+        this.lastFireTime = 0;
+        this.fireRate = 0.15; // detik
+        
+        this.hitbox = new THREE.Box3();
+    }
+
+    update(dt) {
+        if(!this.active) return;
+
+        // Animasi baling-baling
+        this.mesh.userData.propeller.rotation.z += this.speed * 0.05;
+
+        // Hitung kecepatan target berdasarkan gas
+        const targetSpeed = this.minSpeed + (this.maxSpeed - this.minSpeed) * this.throttle;
+        this.speed += (targetSpeed - this.speed) * 2 * dt;
+
+        // Terapkan momentum rotasi
+        this.mesh.rotateX(this.pitch * dt);
+        this.mesh.rotateZ(-this.roll * dt);
+        this.mesh.rotateY(-this.yaw * dt);
+
+        // Auto-leveling sedikit
+        if(this.type !== 'player') {
+            const currentRoll = this.mesh.rotation.z;
+            this.mesh.rotation.z = THREE.MathUtils.lerp(currentRoll, 0, dt * 0.5);
+        }
+
+        // Bergerak maju
+        this.mesh.translateZ(-this.speed * dt);
+
+        // Batas Area
+        if(this.mesh.position.y < 10) { // Menabrak tanah
+            this.takeDamage(1000);
+        }
+        if(Math.abs(this.mesh.position.x) > BOUNDARY || Math.abs(this.mesh.position.z) > BOUNDARY) {
+            // Berbelok kembali ke tengah
+            const center = new THREE.Vector3(0, 500, 0);
+            const dir = center.sub(this.mesh.position).normalize();
+            const targetRotation = Math.atan2(dir.x, dir.z);
+            this.mesh.rotation.y = THREE.MathUtils.lerp(this.mesh.rotation.y, targetRotation, dt);
+        }
+
+        this.hitbox.setFromObject(this.mesh);
+    }
+
+    fire() {
+        const now = performance.now() / 1000;
+        if(now - this.lastFireTime > this.fireRate) {
+            this.lastFireTime = now;
+            bullets.push(new Projectile(this.mesh.position, this.mesh.rotation, this.speed + 800, this.type === 'player'));
+            if(this.type === 'player') audioFX.playShoot();
+        }
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        if(this.health <= 0 && this.active) {
+            this.active = false;
+            particles.spawnExplosion(this.mesh.position);
+            scene.remove(this.mesh);
+            
+            if(this.type !== 'player') {
+                score += 100;
+                enemiesRemaining--;
+                document.getElementById('score-display').innerText = `Skor: ${score}`;
+                document.getElementById('enemy-count').innerText = `Musuh: ${enemiesRemaining}`;
+                checkWaveProgress();
+            } else {
+                gameOver();
+            }
+        }
+    }
+}
+
+class Player extends Airplane {
+    constructor() {
+        super('player');
+        this.mesh.position.set(0, 500, 0);
+        this.throttle = 0.6;
+    }
+
+    handleInput(dt) {
+        // Kontrol Keyboard
+        let pitchInput = 0;
+        let rollInput = 0;
+        let yawInput = 0;
+
+        if(keys.w) pitchInput = 1.5;
+        if(keys.s) pitchInput = -1.5;
+        if(keys.a) rollInput = 2.0;
+        if(keys.d) rollInput = -2.0;
+        if(keys.q) yawInput = 1.0;
+        if(keys.e) yawInput = -1.0;
+
+        // Kontrol Mobile (menimpa keyboard jika aktif)
+        if(touchInput.pitch !== 0 || touchInput.roll !== 0) {
+            pitchInput = touchInput.pitch * 1.5;
+            rollInput = touchInput.roll * 2.0;
+        }
+
+        // Gas / Rem
+        if(keys.shift || touchInput.throttle === 1) this.throttle = Math.min(1, this.throttle + dt * 0.5);
+        if(keys.ctrl || touchInput.throttle === -1) this.throttle = Math.max(0, this.throttle - dt * 0.5);
+
+        // Terapkan dengan halus
+        this.pitch = THREE.MathUtils.lerp(this.pitch, pitchInput, dt * 5);
+        this.roll = THREE.MathUtils.lerp(this.roll, rollInput, dt * 5);
+        this.yaw = THREE.MathUtils.lerp(this.yaw, yawInput, dt * 5);
+
+        if(keys.space || touchInput.fire) {
+            this.fire();
+        }
+        
+        audioFX.updateEngine(this.throttle);
+        updateHUD();
+    }
+}
+
+class EnemyAI extends Airplane {
+    constructor(type, pos) {
+        super(type);
+        this.mesh.position.copy(pos);
+        this.mesh.lookAt(player.mesh.position);
+        this.throttle = 0.8; // Musuh terbang sedikit lebih lambat
+    }
+
+    update(dt) {
+        if(!this.active || !player.active) return;
+        
+        // AI Dogfight Sederhana
+        const distanceToPlayer = this.mesh.position.distanceTo(player.mesh.position);
+        
+        // Arah ke pemain
+        const targetDir = new THREE.Vector3().subVectors(player.mesh.position, this.mesh.position).normalize();
+        
+        // Vektor depan
+        const forward = new THREE.Vector3(0,0,-1).applyQuaternion(this.mesh.quaternion);
+        
+        // Sudut antara depan dan target
+        const angle = forward.angleTo(targetDir);
+
+        // Berbelok ke pemain (slerp quaternion untuk rasa arcade)
+        if (distanceToPlayer > 200) {
+             const targetRotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,-1), targetDir);
+             this.mesh.quaternion.slerp(targetRotation, dt * 1.2);
+        } else {
+             // Manuver menghindar jika terlalu dekat
+             this.pitch = 1.5;
+        }
+
+        // Tembak jika melihat pemain dengan dekat
+        if(angle < 0.2 && distanceToPlayer < 1000) {
+            this.fire();
+        }
+
+        super.update(dt);
+    }
+}
+
+// --- 6. MANAJEMEN GAME ---
+let player;
+let enemies = [];
+let bullets = [];
+let clock = new THREE.Clock();
+
+function initGame() {
+    // Bersihkan status lama
+    scene.children = scene.children.filter(c => c.type === "Light" || c.type === "Mesh" && c.geometry.type === "PlaneGeometry" || c === particles.mesh);
+    enemies = [];
+    bullets = [];
+    score = 0;
+    currentWave = 1;
+    
+    player = new Player();
+    
+    document.getElementById('hud-health').style.width = '100%';
+    document.getElementById('score-display').innerText = 'Skor: 0';
+    
+    startWave();
+}
+
+function startWave() {
+    currentState = GAME_STATE.BRIEFING;
+    let title = "";
+    let text = "";
+
+    if (currentWave === 1) {
+        title = "MISI 1: PENCEGATAN";
+        text = "Pesawat pengintai musuh terdeteksi. Cegat mereka sebelum mereka melaporkan posisi kita.";
+        spawnEnemies(3, 'zero');
+    } else if (currentWave === 2) {
+        title = "MISI 2: ESKALASI";
+        text = "Angkatan Udara Belanda (ML-KNIL) telah tiba. Hadapi musuh yang berdatangan!";
+        spawnEnemies(5, 'dutch');
+    } else {
+        title = `GELOMBANG ${currentWave}: BERTAHAN`;
+        text = "Pertahankan wilayah udara dengan segala cara. Merdeka!";
+        spawnEnemies(3 + currentWave, currentWave % 2 === 0 ? 'dutch' : 'zero');
+    }
+
+    document.getElementById('briefing-title').innerText = title;
+    document.getElementById('briefing-text').innerText = text;
+    document.getElementById('mission-title').innerText = `GELOMBANG ${currentWave}`;
+    
+    const briefingEl = document.getElementById('mission-briefing');
+    briefingEl.style.display = 'block';
+
+    setTimeout(() => {
+        briefingEl.style.display = 'none';
+        currentState = GAME_STATE.PLAYING;
+    }, 4000);
+}
+
+function spawnEnemies(count, type) {
+    enemiesRemaining = count;
+    document.getElementById('enemy-count').innerText = `Musuh: ${count}`;
+    for(let i=0; i<count; i++) {
+        // Munculkan secara acak di sekitar pemain
+        const offset = new THREE.Vector3(
+            (Math.random() - 0.5) * 4000,
+            Math.random() * 500 + 500,
+            (Math.random() - 0.5) * 4000
+        );
+        const pos = player.mesh.position.clone().add(offset);
+        enemies.push(new EnemyAI(type, pos));
+    }
+}
+
+function checkWaveProgress() {
+    if(enemiesRemaining <= 0) {
+        currentWave++;
+        setTimeout(startWave, 2000);
+    }
+}
+
+function gameOver() {
+    currentState = GAME_STATE.GAMEOVER;
+    const briefingEl = document.getElementById('mission-briefing');
+    document.getElementById('briefing-title').innerText = "GUGUR";
+    document.getElementById('briefing-text').innerText = `Pesawat Anda tertembak jatuh. Skor Akhir: ${score}\nMuat ulang halaman untuk mencoba lagi.`;
+    briefingEl.style.display = 'block';
+    briefingEl.style.borderColor = "#444";
+}
+
+function updateHUD() {
+    if(!player || !player.active) return;
+    const healthPercent = Math.max(0, (player.health / player.maxHealth) * 100);
+    document.getElementById('hud-health').style.width = `${healthPercent}%`;
+    document.getElementById('hud-throttle').style.width = `${player.throttle * 100}%`;
+    
+    // Konversi unit ke km/jam
+    const speedKmh = Math.floor(player.speed * 1.5);
+    document.getElementById('speed-text').innerText = `${speedKmh} km/h`;
+}
+
+// Logika Kamera Mengikuti Pesawat
+function updateCamera(dt) {
+    if(!player || !player.active) return;
+    
+    // Pengaturan posisi kamera di belakang pesawat
+    const relativeCameraOffset = new THREE.Vector3(0, 8, 30);
+    const cameraOffset = relativeCameraOffset.applyMatrix4(player.mesh.matrixWorld);
+    
+    // Ikuti dengan halus
+    camera.position.lerp(cameraOffset, dt * 5);
+    
+    // Lihat sedikit di atas pesawat
+    const targetPos = player.mesh.position.clone();
+    targetPos.y += 5; 
+    
+    const currentLookAt = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+    const targetLookAt = new THREE.Vector3().subVectors(targetPos, camera.position).normalize();
+    
+    const lookSlerp = currentLookAt.lerp(targetLookAt, dt * 8);
+    camera.lookAt(camera.position.clone().add(lookSlerp));
+}
+
+// Deteksi Tabrakan (Tembakan)
+function checkCollisions() {
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        if(!b.active) {
+            bullets.splice(i, 1);
+            continue;
+        }
+
+        const bPos = b.mesh.position;
+
+        // Peluru Pemain vs Musuh
+        if (b.isPlayer) {
+            for (let e of enemies) {
+                if (e.active && e.hitbox.containsPoint(bPos)) {
+                    e.takeDamage(20);
+                    b.destroy();
+                    break;
+                }
+            }
+        } 
+        // Peluru Musuh vs Pemain
+        else {
+            if (player.active && player.hitbox.containsPoint(bPos)) {
+                player.takeDamage(10);
+                b.destroy();
+            }
+        }
+    }
+}
+
+// Loop Utama Game
+function animate() {
+    requestAnimationFrame(animate);
+    const dt = Math.min(clock.getDelta(), 0.1); // Batasi dt agar tidak lag terlalu jauh
+
+    if (currentState === GAME_STATE.PLAYING || currentState === GAME_STATE.BRIEFING) {
+        if(player.active) player.handleInput(dt);
+        player.update(dt);
+        
+        enemies.forEach(e => e.update(dt));
+        bullets.forEach(b => b.update(dt));
+        
+        checkCollisions();
+        updateCamera(dt);
+    }
+    
+    particles.update(dt);
+    renderer.render(scene, camera);
+}
+
+// --- 7. PENANGANAN INPUT ---
+window.addEventListener('keydown', (e) => {
+    const key = e.key.toLowerCase();
+    if(keys.hasOwnProperty(key)) keys[key] = true;
+    if(e.key === "Shift") keys.shift = true;
+    if(e.key === "Control") keys.ctrl = true;
+});
+
+window.addEventListener('keyup', (e) => {
+    const key = e.key.toLowerCase();
+    if(keys.hasOwnProperty(key)) keys[key] = false;
+    if(e.key === "Shift") keys.shift = false;
+    if(e.key === "Control") keys.ctrl = false;
+});
+
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Kontrol Sentuh Mobile
+const joystickZone = document.getElementById('joystick');
+const joystickKnob = document.getElementById('joystick-knob');
+let joystickCenter = { x: 0, y: 0 };
+let isDraggingJoystick = false;
+
+joystickZone.addEventListener('touchstart', (e) => {
+    isDraggingJoystick = true;
+    const rect = joystickZone.getBoundingClientRect();
+    joystickCenter = { x: rect.left + rect.width/2, y: rect.top + rect.height/2 };
+    handleJoystickMove(e.touches[0]);
+});
+joystickZone.addEventListener('touchmove', (e) => {
+    if(isDraggingJoystick) handleJoystickMove(e.touches[0]);
+});
+const resetJoystick = () => {
+    isDraggingJoystick = false;
+    joystickKnob.style.transform = `translate(0px, 0px)`;
+    touchInput.pitch = 0;
+    touchInput.roll = 0;
+};
+joystickZone.addEventListener('touchend', resetJoystick);
+joystickZone.addEventListener('touchcancel', resetJoystick);
+
+function handleJoystickMove(touch) {
+    const maxDist = 50;
+    let dx = touch.clientX - joystickCenter.x;
+    let dy = touch.clientY - joystickCenter.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    
+    if(dist > maxDist) {
+        dx = (dx/dist) * maxDist;
+        dy = (dy/dist) * maxDist;
+    }
+    
+    joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+    
+    // Petakan ke skala -1 hingga 1
+    touchInput.roll = -(dx / maxDist); // negatif agar kiri belok kiri
+    touchInput.pitch = -(dy / maxDist); // Tarik ke bawah untuk naik
+}
+
+// Tombol Aksi
+const btnFire = document.getElementById('btn-fire');
+btnFire.addEventListener('touchstart', () => touchInput.fire = true);
+btnFire.addEventListener('touchend', () => touchInput.fire = false);
+
+const btnAccel = document.getElementById('btn-accel');
+btnAccel.addEventListener('touchstart', () => touchInput.throttle = 1);
+btnAccel.addEventListener('touchend', () => touchInput.throttle = 0);
+
+const btnDecel = document.getElementById('btn-decel');
+btnDecel.addEventListener('touchstart', () => touchInput.throttle = -1);
+btnDecel.addEventListener('touchend', () => touchInput.throttle = 0);
+
+
+// Menu Mulai
+document.getElementById('btn-start').addEventListener('click', () => {
+    document.getElementById('start-screen').style.display = 'none';
+    audioFX.init(); // Memulai audio setelah pengguna berinteraksi
+    initGame();
+});
+
+// Posisi awal kamera untuk latar belakang menu
+camera.position.set(0, 1000, 2000);
+camera.lookAt(0,0,0);
+animate();
+
+</script>
+</body>
+</html>
+
+
+```
